@@ -1,0 +1,37 @@
+{
+  "name": "n8n-nodes-bun",
+  "version": "0.1.0",
+  "description": "n8n community node that executes TypeScript/JavaScript code using Bun runtime",
+  "keywords": [
+    "n8n-community-node-package",
+    "n8n",
+    "bun",
+    "typescript",
+    "code"
+  ],
+  "license": "MIT",
+  "main": "dist/nodes/BunCode/BunCode.node.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && copyfiles \"nodes/**/*.svg\" dist/",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "nodes": [
+      "dist/nodes/BunCode/BunCode.node.js"
+    ]
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "copyfiles": "^2.4.1",
+    "n8n-workflow": "*",
+    "typescript": "~5.7.0"
+  }
+}
