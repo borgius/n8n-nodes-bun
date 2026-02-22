@@ -17,7 +17,10 @@
   "scripts": {
     "build": "tsc && copyfiles \"nodes/**/*.svg\" dist/",
     "dev": "tsc --watch",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "release": "npm version patch && npm run build && npm publish",
+    "release:minor": "npm version minor && npm run build && npm publish",
+    "release:major": "npm version major && npm run build && npm publish"
   },
   "n8n": {
     "n8nNodesApiVersion": 1,
