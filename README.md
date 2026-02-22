@@ -12,7 +12,7 @@ Unlike the built-in Code node (which runs in a sandboxed VM), this node spawns a
 - **Full Bun runtime** — access `Bun.file()`, `Bun.serve()`, `Bun.sleep()`, `fetch()`, and all Bun APIs
 - **No sandbox** — code executes with full system access (read/write files, spawn processes, network calls)
 - **Two execution modes** — "Run Once for All Items" and "Run Once for Each Item", matching the standard Code node
-- **n8n-compatible helpers** — familiar `$input`, `$json`, `items` variables
+- **Full n8n Code node compatibility** — `$input`, `$json`, `$('NodeName')`, `$workflow`, `$execution`, `$env`, `$now`, `DateTime`, and more
 - **Error handling** — supports n8n's "Continue on Fail" setting
 - **60-second timeout** — prevents runaway scripts
 
@@ -113,6 +113,10 @@ return {
 
 ### Available Variables
 
+The Bun Code node supports the same built-in variables as the native n8n Code node, so you can use it as a drop-in replacement.
+
+#### Input Data
+
 | Variable | Mode | Description |
 |----------|------|-------------|
 | `$input.all()` | Both | Returns all input items as an array |
@@ -122,6 +126,86 @@ return {
 | `items` | All Items | Alias for `$input.all()` — all input items |
 | `item` | Each Item | Alias for `$input.item` — current item |
 | `$json` | Both | Shortcut to the `.json` property of the first/current item |
+| `$binary` | Both | Binary data of the first/current item |
+| `$data` | Both | Alias for `$json` |
+
+#### Accessing Other Nodes — `$()`
+
+Access output data from any previously executed node in the workflow:
+
+```typescript
+// Get all items from a node
+const webhookData = $('Webhook').all();
+
+// Get the first item's json
+const record = $('Postgres').first().json;
+
+// Check specific items
+const last = $('HTTP Request').last();
+const matched = $('Transform').itemMatching(2);
+```
+
+The `$()` function returns an object with:
+
+| Method / Property | Description |
+|---|---|
+| `.all()` | All output items from the node |
+| `.first()` | First output item |
+| `.last()` | Last output item |
+| `.item` | First output item (property) |
+| `.pairedItem(index?)` | Item at the given index |
+| `.itemMatching(index)` | Item at the given index |
+| `.isExecuted` | Always `true` (node must be executed to have data) |
+
+The legacy `$items(nodeName?)` function is also available.
+
+#### Workflow & Execution Context
+
+| Variable | Description |
+|---|---|
+| `$workflow.id` | Workflow ID |
+| `$workflow.name` | Workflow name |
+| `$workflow.active` | Whether the workflow is active |
+| `$execution.id` | Current execution ID |
+| `$execution.mode` | Execution mode (`'manual'`, `'production'`, etc.) |
+| `$execution.resumeUrl` | URL to resume a waiting execution |
+| `$mode` | Same as `$execution.mode` |
+| `$prevNode.name` | Name of the previous node |
+| `$prevNode.outputIndex` | Output index of the connection from the previous node |
+| `$prevNode.runIndex` | Run index of the previous node |
+
+#### Item Position
+
+| Variable | Description |
+|---|---|
+| `$itemIndex` | Current item index (each-item mode) |
+| `$position` | Alias for `$itemIndex` |
+| `$thisItemIndex` | Alias for `$itemIndex` |
+| `$runIndex` | Current run index |
+| `$thisRunIndex` | Alias for `$runIndex` |
+| `$thisItem` | Current item reference |
+
+#### Environment & Node Metadata
+
+| Variable | Description |
+|---|---|
+| `$env` | Environment variables (e.g. `$env.MY_API_KEY`) |
+| `$nodeId` | Current node's unique ID |
+| `$nodeVersion` | Current node's type version |
+
+#### Date & Time (Luxon)
+
+If [Luxon](https://moment.github.io/luxon/) is available in node_modules (it ships with n8n), these globals are provided:
+
+| Variable | Description |
+|---|---|
+| `$now` | Current date/time as a Luxon `DateTime` |
+| `$today` | Today at midnight as a Luxon `DateTime` |
+| `DateTime` | Luxon `DateTime` class |
+| `Interval` | Luxon `Interval` class |
+| `Duration` | Luxon `Duration` class |
+
+If Luxon is not installed, `$now` and `$today` fall back to native JavaScript `Date` objects.
 
 ### Item Format
 
@@ -143,6 +227,27 @@ When returning data, you can return either:
 - **Primitives** — wrapped as `{ json: { data: value } }`
 
 ## Examples
+
+### Access other nodes' data
+
+```typescript
+// Merge data from two upstream nodes
+const customers = $('Get Customers').all();
+const orders = $('Get Orders').all();
+
+return customers.map(c => {
+  const customerOrders = orders.filter(
+    o => o.json.customerId === c.json.id
+  );
+  return {
+    json: {
+      ...c.json,
+      orderCount: customerOrders.length,
+      totalSpent: customerOrders.reduce((sum, o) => sum + (o.json.amount as number), 0),
+    }
+  };
+});
+```
 
 ### Use TypeScript features
 
@@ -247,23 +352,24 @@ return results;
 
 ## How It Works
 
-1. Your code is wrapped in a template that provides the `$input`, `$json`, `items` helpers
-2. The template + your code are written to a temporary `.ts` file
-3. Input items are serialized to a temporary JSON file
+1. Your code is parsed for `$('NodeName')` references — output data for those nodes is collected
+2. Input items, referenced node data, and execution context are serialized to temp JSON files
+3. Your code is wrapped in a template that provides all `$` helpers and written to a `.ts` file
 4. `bun run script.ts` is spawned as a child process
 5. Your code reads input, executes, and writes output to another temp JSON file
 6. The node reads the output and passes it downstream in n8n
 7. All temp files are cleaned up
 
 ```
-n8n node                          Bun child process
-┌─────────────┐                  ┌─────────────────┐
-│ Serialize    │──input.json───> │ Read input       │
-│ input items  │                 │ Provide helpers  │
-│              │                 │ Execute user code│
-│ Parse output │<─output.json── │ Write result     │
-│ items        │                 │                  │
-└─────────────┘                  └─────────────────┘
+n8n node                              Bun child process
+┌──────────────────┐                  ┌─────────────────────┐
+│ Parse $() refs   │                  │                     │
+│ Collect node data│──input.json────> │ Read input          │
+│ Collect context  │──nodeData.json─> │ Build $() accessor  │
+│                  │──context.json──> │ Set up $workflow etc │
+│                  │                  │ Execute user code   │
+│ Parse output     │<─output.json─── │ Write result        │
+└──────────────────┘                  └─────────────────────┘
 ```
 
 ## Security Considerations
@@ -280,9 +386,14 @@ This node executes code **without any sandbox**. The Bun process has full access
 
 ## Limitations
 
-- **Binary data** — n8n binary attachments are not passed through to the Bun process. Work with `json` data or read files directly.
-- **n8n context** — advanced n8n helpers like `$getWorkflowStaticData`, `helpers.httpRequestWithAuthentication`, and credential access are not available inside the Bun process. Use `fetch()` or Bun APIs directly.
+- **`$evaluateExpression()`** — not available (requires the live n8n expression engine).
+- **`$secrets` / `$vars`** — workflow-level variables and external secrets are not passed through.
+- **`$self` / `$parameter`** — node-internal context and parameter access are not available.
+- **`$fromAI()`** — AI-generated content placeholders are not available.
+- **`$getWorkflowStaticData`** — static data persistence is not available. Use files or a database instead.
+- **Credential helpers** — `helpers.httpRequestWithAuthentication` and credential access are not available. Use `fetch()` or Bun APIs directly with tokens from `$env`.
 - **Console output** — `console.log()` output from your code goes to the Bun process stderr/stdout and is not displayed in the n8n UI.
+- **Dynamic `$()` references** — node names in `$('NodeName')` must be string literals in your code (not variables), since they are parsed statically before execution.
 - **Execution timeout** — scripts are killed after 60 seconds.
 - **Requires Bun installed** — the `bun` binary must be in the system PATH on the machine running n8n.
 

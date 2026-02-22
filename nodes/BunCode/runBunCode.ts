@@ -4,15 +4,97 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import type { INodeExecutionData } from 'n8n-workflow';
 
-function buildAllItemsTemplate(
-	userCode: string,
+export interface ExecutionContext {
+	workflow: { id?: string; name?: string; active: boolean };
+	execution: { id: string; mode: string; resumeUrl: string };
+	node: { id: string; name: string; typeVersion: number };
+	prevNode: { name: string; outputIndex: number; runIndex: number };
+	mode: string;
+	timezone: string;
+	env: Record<string, string | undefined>;
+}
+
+/**
+ * Builds the shared preamble injected into every subprocess script.
+ * Provides all n8n Code-node compatible $ helpers.
+ */
+function buildPreamble(
 	inputPath: string,
-	outputPath: string,
+	nodeDataPath: string,
+	contextPath: string,
 ): string {
 	return `
 import { readFileSync, writeFileSync } from 'fs';
 
+// --- raw data ---
 const __inputData: any[] = JSON.parse(readFileSync(${JSON.stringify(inputPath)}, 'utf-8'));
+const __nodeData: Record<string, any[]> = JSON.parse(readFileSync(${JSON.stringify(nodeDataPath)}, 'utf-8'));
+const __ctx: any = JSON.parse(readFileSync(${JSON.stringify(contextPath)}, 'utf-8'));
+
+// --- Luxon (best-effort) ---
+let DateTime: any, Interval: any, Duration: any;
+try {
+	const luxon = require('luxon');
+	DateTime = luxon.DateTime;
+	Interval = luxon.Interval;
+	Duration = luxon.Duration;
+} catch {
+	DateTime = Date;
+	Interval = undefined;
+	Duration = undefined;
+}
+
+// --- $() node accessor ---
+function $(nodeName: string) {
+	const items = __nodeData[nodeName];
+	if (!items) throw new Error(\`No data found for node "\${nodeName}". Make sure the node exists, has been executed, and is referenced in your code as $('\${nodeName}').\`);
+	return {
+		all: (branchIndex?: number, runIndex?: number) => items,
+		first: (branchIndex?: number, runIndex?: number) => items[0] ?? null,
+		last: (branchIndex?: number, runIndex?: number) => items[items.length - 1] ?? null,
+		item: items[0] ?? null,
+		pairedItem: (itemIndex?: number) => items[itemIndex ?? 0] ?? null,
+		itemMatching: (itemIndex: number) => items[itemIndex] ?? null,
+		isExecuted: true,
+		context: {},
+		params: {},
+	};
+}
+
+// --- $items() legacy function ---
+function $items(nodeName?: string, outputIndex?: number, runIndex?: number) {
+	if (!nodeName) return __inputData;
+	return __nodeData[nodeName] ?? [];
+}
+
+// --- Workflow & execution context ---
+const $workflow = __ctx.workflow ?? {};
+const $execution = __ctx.execution ?? {};
+const $prevNode = __ctx.prevNode ?? {};
+const $mode = __ctx.mode ?? 'unknown';
+const $nodeVersion = __ctx.node?.typeVersion ?? 1;
+const $nodeId = __ctx.node?.id ?? '';
+
+// --- Environment ---
+const $env = __ctx.env ?? {};
+
+// --- Date/time helpers ---
+const $now = DateTime === Date ? new Date() : DateTime.now();
+const $today = DateTime === Date
+	? new Date(new Date().setHours(0, 0, 0, 0))
+	: DateTime.now().startOf('day');
+`;
+}
+
+function buildAllItemsTemplate(
+	userCode: string,
+	inputPath: string,
+	outputPath: string,
+	nodeDataPath: string,
+	contextPath: string,
+): string {
+	return `
+${buildPreamble(inputPath, nodeDataPath, contextPath)}
 
 const $input = {
 	all: () => __inputData,
@@ -23,6 +105,14 @@ const $input = {
 
 const items = __inputData;
 const $json = __inputData[0]?.json ?? {};
+const $binary = __inputData[0]?.binary ?? {};
+const $data = $json;
+const $position = 0;
+const $itemIndex = 0;
+const $thisItemIndex = 0;
+const $runIndex = 0;
+const $thisRunIndex = 0;
+const $thisItem = __inputData[0] ?? null;
 
 async function __userCode() {
 ${userCode}
@@ -52,11 +142,12 @@ function buildEachItemTemplate(
 	userCode: string,
 	inputPath: string,
 	outputPath: string,
+	nodeDataPath: string,
+	contextPath: string,
 ): string {
 	return `
-import { readFileSync, writeFileSync } from 'fs';
+${buildPreamble(inputPath, nodeDataPath, contextPath)}
 
-const __inputData: any[] = JSON.parse(readFileSync(${JSON.stringify(inputPath)}, 'utf-8'));
 const __results: any[] = [];
 
 for (let __idx = 0; __idx < __inputData.length; __idx++) {
@@ -68,7 +159,15 @@ for (let __idx = 0; __idx < __inputData.length; __idx++) {
 	};
 
 	const item = __inputData[__idx];
-	const $json = __inputData[__idx].json ?? {};
+	const $json = __inputData[__idx]?.json ?? {};
+	const $binary = __inputData[__idx]?.binary ?? {};
+	const $data = $json;
+	const $position = __idx;
+	const $itemIndex = __idx;
+	const $thisItemIndex = __idx;
+	const $runIndex = 0;
+	const $thisRunIndex = 0;
+	const $thisItem = __inputData[__idx] ?? null;
 
 	const __runUserCode = async () => {
 ${userCode}
@@ -96,11 +195,17 @@ writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify(__results));
 
 function executeBun(
 	scriptPath: string,
+	nodePath?: string,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	return new Promise((resolve, reject) => {
+		const spawnEnv = { ...process.env };
+		if (nodePath) {
+			spawnEnv.NODE_PATH = nodePath + (spawnEnv.NODE_PATH ? `:${spawnEnv.NODE_PATH}` : '');
+		}
 		const proc = spawn('bun', ['run', scriptPath], {
 			stdio: ['ignore', 'pipe', 'pipe'],
 			timeout: 60_000,
+			env: spawnEnv,
 		});
 
 		let stdout = '';
@@ -135,23 +240,40 @@ export async function runBunCode(
 	userCode: string,
 	inputItems: INodeExecutionData[],
 	mode: string,
+	nodeDataMap: Record<string, INodeExecutionData[]> = {},
+	executionContext: ExecutionContext = {
+		workflow: { active: false },
+		execution: { id: '', mode: 'manual', resumeUrl: '' },
+		node: { id: '', name: '', typeVersion: 1 },
+		prevNode: { name: '', outputIndex: 0, runIndex: 0 },
+		mode: 'manual',
+		timezone: 'UTC',
+		env: {},
+	},
 ): Promise<INodeExecutionData[]> {
 	const tempDir = await mkdtemp(join(tmpdir(), 'n8n-bun-'));
 	const inputPath = join(tempDir, 'input.json');
 	const outputPath = join(tempDir, 'output.json');
+	const nodeDataPath = join(tempDir, 'nodeData.json');
+	const contextPath = join(tempDir, 'context.json');
 	const scriptPath = join(tempDir, 'script.ts');
 
 	try {
 		await writeFile(inputPath, JSON.stringify(inputItems));
+		await writeFile(nodeDataPath, JSON.stringify(nodeDataMap));
+		await writeFile(contextPath, JSON.stringify(executionContext));
 
 		const template =
 			mode === 'runOnceForAllItems'
-				? buildAllItemsTemplate(userCode, inputPath, outputPath)
-				: buildEachItemTemplate(userCode, inputPath, outputPath);
+				? buildAllItemsTemplate(userCode, inputPath, outputPath, nodeDataPath, contextPath)
+				: buildEachItemTemplate(userCode, inputPath, outputPath, nodeDataPath, contextPath);
 
 		await writeFile(scriptPath, template);
 
-		const { stderr, exitCode } = await executeBun(scriptPath);
+		// Resolve custom node_modules for require() in user code
+		// __dirname: .../node_modules/n8n-nodes-bun/dist/nodes/BunCode
+		const customNodeModules = join(__dirname, '..', '..', '..', '..');
+		const { stderr, exitCode } = await executeBun(scriptPath, customNodeModules);
 
 		if (exitCode !== 0) {
 			throw new Error(

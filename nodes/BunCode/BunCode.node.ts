@@ -98,8 +98,49 @@ export class BunCode implements INodeType {
 		const code = this.getNodeParameter('code', 0) as string;
 		const inputItems = this.getInputData();
 
+		// Extract $('NodeName') references from user code and collect their output data
+		const nodeDataMap: Record<string, INodeExecutionData[]> = {};
+		const nodeRefPattern = /\$\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
+		let match: RegExpExecArray | null;
+		while ((match = nodeRefPattern.exec(code)) !== null) {
+			const nodeName = match[1];
+			if (!(nodeName in nodeDataMap)) {
+				try {
+					const proxy = this.getWorkflowDataProxy(0);
+					nodeDataMap[nodeName] = proxy.$items(nodeName);
+				} catch {
+					// Node not found or not yet executed — skip
+				}
+			}
+		}
+
+		// Collect execution context for n8n Code node compatibility
+		const node = this.getNode();
+		const sourceData = this.getInputSourceData();
+		const executionContext = {
+			workflow: this.getWorkflow(),
+			execution: {
+				id: this.getExecutionId(),
+				mode: this.getMode(),
+				resumeUrl: `${this.getRestApiUrl()}/waiting/${this.getExecutionId()}`,
+			},
+			node: {
+				id: node.id,
+				name: node.name,
+				typeVersion: node.typeVersion,
+			},
+			prevNode: {
+				name: sourceData.previousNode,
+				outputIndex: sourceData.previousNodeOutput ?? 0,
+				runIndex: sourceData.previousNodeRun ?? 0,
+			},
+			mode: this.getMode(),
+			timezone: this.getTimezone(),
+			env: process.env,
+		};
+
 		try {
-			const result = await runBunCode(code, inputItems, mode);
+			const result = await runBunCode(code, inputItems, mode, nodeDataMap, executionContext);
 			return [result];
 		} catch (error) {
 			if (this.continueOnFail()) {
