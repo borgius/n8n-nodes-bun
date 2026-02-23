@@ -97,6 +97,7 @@ export class BunCode implements INodeType {
 		const mode = this.getNodeParameter('mode', 0) as string;
 		const code = this.getNodeParameter('code', 0) as string;
 		const inputItems = this.getInputData();
+		const proxy = this.getWorkflowDataProxy(0);
 
 		// Extract $('NodeName') references from user code and collect their output data
 		const nodeDataMap: Record<string, INodeExecutionData[]> = {};
@@ -106,7 +107,6 @@ export class BunCode implements INodeType {
 			const nodeName = match[1];
 			if (!(nodeName in nodeDataMap)) {
 				try {
-					const proxy = this.getWorkflowDataProxy(0);
 					nodeDataMap[nodeName] = proxy.$items(nodeName);
 				} catch {
 					// Node not found or not yet executed — skip
@@ -114,9 +114,39 @@ export class BunCode implements INodeType {
 			}
 		}
 
+		// Pre-evaluate $evaluateExpression('...') calls with static string arguments
+		const evaluatedExpressions: Record<string, unknown> = {};
+		const exprPattern = /\$evaluateExpression\(\s*(['"`])([^'"`]*)\1/g;
+		let exprMatch: RegExpExecArray | null;
+		while ((exprMatch = exprPattern.exec(code)) !== null) {
+			const expression = exprMatch[2];
+			if (!(expression in evaluatedExpressions)) {
+				try {
+					evaluatedExpressions[expression] = this.evaluateExpression(expression, 0);
+				} catch {
+					// Expression evaluation failed — will throw at runtime in subprocess
+				}
+			}
+		}
+
 		// Collect execution context for n8n Code node compatibility
 		const node = this.getNode();
 		const sourceData = this.getInputSourceData();
+
+		// Safely extract proxy values that may be proxied objects
+		let vars = {};
+		let secrets = {};
+		let parameter = {};
+		let selfData = {};
+		let staticDataGlobal = {};
+		let staticDataNode = {};
+		try { vars = JSON.parse(JSON.stringify(proxy.$vars ?? {})); } catch {}
+		try { secrets = JSON.parse(JSON.stringify(proxy.$secrets ?? {})); } catch {}
+		try { parameter = JSON.parse(JSON.stringify(proxy.$parameter ?? {})); } catch {}
+		try { selfData = JSON.parse(JSON.stringify(this.getContext('node') ?? {})); } catch {}
+		try { staticDataGlobal = JSON.parse(JSON.stringify(this.getWorkflowStaticData('global') ?? {})); } catch {}
+		try { staticDataNode = JSON.parse(JSON.stringify(this.getWorkflowStaticData('node') ?? {})); } catch {}
+
 		const executionContext = {
 			workflow: this.getWorkflow(),
 			execution: {
@@ -128,6 +158,7 @@ export class BunCode implements INodeType {
 				id: node.id,
 				name: node.name,
 				typeVersion: node.typeVersion,
+				parameters: parameter,
 			},
 			prevNode: {
 				name: sourceData.previousNode,
@@ -137,6 +168,11 @@ export class BunCode implements INodeType {
 			mode: this.getMode(),
 			timezone: this.getTimezone(),
 			env: process.env,
+			vars,
+			secrets,
+			selfData,
+			staticData: { global: staticDataGlobal, node: staticDataNode },
+			evaluatedExpressions,
 		};
 
 		try {

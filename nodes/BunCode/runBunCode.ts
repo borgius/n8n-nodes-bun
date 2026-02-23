@@ -7,11 +7,16 @@ import type { INodeExecutionData } from 'n8n-workflow';
 export interface ExecutionContext {
 	workflow: { id?: string; name?: string; active: boolean };
 	execution: { id: string; mode: string; resumeUrl: string };
-	node: { id: string; name: string; typeVersion: number };
+	node: { id: string; name: string; typeVersion: number; parameters: Record<string, unknown> };
 	prevNode: { name: string; outputIndex: number; runIndex: number };
 	mode: string;
 	timezone: string;
 	env: Record<string, string | undefined>;
+	vars: Record<string, unknown>;
+	secrets: Record<string, unknown>;
+	selfData: Record<string, unknown>;
+	staticData: { global: Record<string, unknown>; node: Record<string, unknown> };
+	evaluatedExpressions: Record<string, unknown>;
 }
 
 /**
@@ -75,8 +80,29 @@ const $mode = __ctx.mode ?? 'unknown';
 const $nodeVersion = __ctx.node?.typeVersion ?? 1;
 const $nodeId = __ctx.node?.id ?? '';
 
-// --- Environment ---
+// --- Environment & variables ---
 const $env = __ctx.env ?? {};
+const $vars = __ctx.vars ?? {};
+const $secrets = __ctx.secrets ?? {};
+
+// --- Node parameters & context ---
+const $parameter = __ctx.node?.parameters ?? {};
+const $self = __ctx.selfData ?? {};
+
+// --- Workflow static data (read-only snapshot) ---
+function $getWorkflowStaticData(type: 'global' | 'node') {
+	return __ctx.staticData?.[type] ?? {};
+}
+
+// --- Expression evaluator (pre-evaluated static expressions) ---
+function $evaluateExpression(expression: string, _itemIndex?: number) {
+	if (expression in (__ctx.evaluatedExpressions ?? {})) {
+		return __ctx.evaluatedExpressions[expression];
+	}
+	throw new Error(
+		\`Cannot evaluate expression "\${expression}" at runtime. Only static string literal expressions are supported in Bun Code. Use n8n expressions in node parameters instead.\`
+	);
+}
 
 // --- Date/time helpers ---
 const $now = DateTime === Date ? new Date() : DateTime.now();
@@ -244,11 +270,16 @@ export async function runBunCode(
 	executionContext: ExecutionContext = {
 		workflow: { active: false },
 		execution: { id: '', mode: 'manual', resumeUrl: '' },
-		node: { id: '', name: '', typeVersion: 1 },
+		node: { id: '', name: '', typeVersion: 1, parameters: {} },
 		prevNode: { name: '', outputIndex: 0, runIndex: 0 },
 		mode: 'manual',
 		timezone: 'UTC',
 		env: {},
+		vars: {},
+		secrets: {},
+		selfData: {},
+		staticData: { global: {}, node: {} },
+		evaluatedExpressions: {},
 	},
 ): Promise<INodeExecutionData[]> {
 	const tempDir = await mkdtemp(join(tmpdir(), 'n8n-bun-'));

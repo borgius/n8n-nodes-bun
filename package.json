@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc && copyfiles \"nodes/**/*.svg\" dist/",
     "dev": "tsc --watch",
+    "test": "vitest run",
     "prepublishOnly": "npm run build",
     "release": "npm version patch && npm run build && npm publish",
     "release:minor": "npm version minor && npm run build && npm publish",
@@ -35,6 +36,7 @@
     "@types/node": "^25.3.0",
     "copyfiles": "^2.4.1",
     "n8n-workflow": "*",
-    "typescript": "~5.7.0"
+    "typescript": "~5.7.0",
+    "vitest": "^4.0.18"
   }
 }

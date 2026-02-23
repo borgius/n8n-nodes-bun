@@ -185,13 +185,41 @@ The legacy `$items(nodeName?)` function is also available.
 | `$thisRunIndex` | Alias for `$runIndex` |
 | `$thisItem` | Current item reference |
 
-#### Environment & Node Metadata
+#### Environment, Variables & Secrets
 
 | Variable | Description |
 |---|---|
 | `$env` | Environment variables (e.g. `$env.MY_API_KEY`) |
+| `$vars` | Workflow variables (e.g. `$vars.myVar`) |
+| `$secrets` | External secrets (e.g. `$secrets.mySecret`) |
+
+#### Node Parameters & Context
+
+| Variable | Description |
+|---|---|
+| `$parameter` | Current node's parameters (resolved values) |
+| `$self` | Node context data (read-only snapshot) |
 | `$nodeId` | Current node's unique ID |
 | `$nodeVersion` | Current node's type version |
+
+#### Workflow Static Data
+
+```typescript
+// Read-only snapshot of workflow static data
+const globalData = $getWorkflowStaticData('global');
+const nodeData = $getWorkflowStaticData('node');
+```
+
+> **Note:** Static data is a read-only snapshot — modifications in the Bun process are not persisted back to n8n. For persistent storage, use a database or the filesystem.
+
+#### Expression Evaluation
+
+```typescript
+// Pre-evaluated static expressions
+const value = $evaluateExpression('{{ $json.name }}');
+```
+
+> **Note:** Only expressions with static string literals are supported — they are pre-evaluated on the n8n side before the Bun process starts. Dynamic expressions (built from variables at runtime) will throw an error.
 
 #### Date & Time (Luxon)
 
@@ -386,12 +414,11 @@ This node executes code **without any sandbox**. The Bun process has full access
 
 ## Limitations
 
-- **`$evaluateExpression()`** — not available (requires the live n8n expression engine).
-- **`$secrets` / `$vars`** — workflow-level variables and external secrets are not passed through.
-- **`$self` / `$parameter`** — node-internal context and parameter access are not available.
-- **`$fromAI()`** — AI-generated content placeholders are not available.
-- **`$getWorkflowStaticData`** — static data persistence is not available. Use files or a database instead.
-- **Credential helpers** — `helpers.httpRequestWithAuthentication` and credential access are not available. Use `fetch()` or Bun APIs directly with tokens from `$env`.
+- **`$evaluateExpression()`** — only static string literal expressions are supported (pre-evaluated before the Bun process starts). Dynamic expressions built at runtime will throw.
+- **`$getWorkflowStaticData`** — provides a read-only snapshot. Modifications in the Bun process are **not** persisted back to n8n. Use files or a database for persistent storage.
+- **`$fromAI()`** — AI-generated content placeholders are not available (requires AI agent runtime).
+- **`$getPairedItem()`** — advanced paired item resolution is not available (requires full execution graph).
+- **Credential helpers** — `helpers.httpRequestWithAuthentication` and credential access are not available. Use `fetch()` or Bun APIs directly with tokens from `$env` or `$secrets`.
 - **Console output** — `console.log()` output from your code goes to the Bun process stderr/stdout and is not displayed in the n8n UI.
 - **Dynamic `$()` references** — node names in `$('NodeName')` must be string literals in your code (not variables), since they are parsed statically before execution.
 - **Execution timeout** — scripts are killed after 60 seconds.
