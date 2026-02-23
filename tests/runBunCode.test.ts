@@ -8,6 +8,14 @@ function makeItems(...jsons: Record<string, unknown>[]): INodeExecutionData[] {
 	return jsons.map((json) => ({ json }));
 }
 
+/** Convenience wrapper: calls runBunCode and returns only items. */
+async function run(
+	...args: Parameters<typeof runBunCode>
+): Promise<INodeExecutionData[]> {
+	const { items } = await runBunCode(...args);
+	return items;
+}
+
 function ctx(overrides: Partial<ExecutionContext> = {}): ExecutionContext {
 	return {
 		workflow: { id: 'wf-1', name: 'Test Workflow', active: true },
@@ -32,7 +40,7 @@ function ctx(overrides: Partial<ExecutionContext> = {}): ExecutionContext {
 describe('runOnceForAllItems mode', () => {
 	it('returns items unchanged via passthrough', async () => {
 		const input = makeItems({ a: 1 }, { a: 2 });
-		const result = await runBunCode(
+		const result = await run(
 			'return $input.all();',
 			input,
 			'runOnceForAllItems',
@@ -45,7 +53,7 @@ describe('runOnceForAllItems mode', () => {
 	});
 
 	it('wraps plain objects in { json }', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ foo: "bar" }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -56,7 +64,7 @@ describe('runOnceForAllItems mode', () => {
 	});
 
 	it('wraps primitives in { json: { data } }', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [42];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -67,7 +75,7 @@ describe('runOnceForAllItems mode', () => {
 	});
 
 	it('returns empty array when code returns null', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return null;',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -78,7 +86,7 @@ describe('runOnceForAllItems mode', () => {
 	});
 
 	it('supports single object return (wrapped in array)', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return { json: { single: true } };',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -96,7 +104,7 @@ describe('runOnceForAllItems mode', () => {
 describe('runOnceForEachItem mode', () => {
 	it('processes each item individually', async () => {
 		const input = makeItems({ name: 'alice' }, { name: 'bob' });
-		const result = await runBunCode(
+		const result = await run(
 			'return { json: { greeting: "hi " + $json.name } };',
 			input,
 			'runOnceForEachItem',
@@ -110,7 +118,7 @@ describe('runOnceForEachItem mode', () => {
 
 	it('sets pairedItem for each output', async () => {
 		const input = makeItems({ a: 1 }, { a: 2 });
-		const result = await runBunCode(
+		const result = await run(
 			'return $input.item;',
 			input,
 			'runOnceForEachItem',
@@ -122,7 +130,7 @@ describe('runOnceForEachItem mode', () => {
 	});
 
 	it('wraps plain object returns', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return { val: $json.x * 2 };',
 			makeItems({ x: 5 }),
 			'runOnceForEachItem',
@@ -140,7 +148,7 @@ describe('$input helpers', () => {
 	const input = makeItems({ first: true }, { middle: true }, { last: true });
 
 	it('$input.all() returns all items', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { count: $input.all().length } }];',
 			input,
 			'runOnceForAllItems',
@@ -151,7 +159,7 @@ describe('$input helpers', () => {
 	});
 
 	it('$input.first() returns first item', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: $input.first().json }];',
 			input,
 			'runOnceForAllItems',
@@ -162,7 +170,7 @@ describe('$input helpers', () => {
 	});
 
 	it('$input.last() returns last item', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: $input.last().json }];',
 			input,
 			'runOnceForAllItems',
@@ -173,7 +181,7 @@ describe('$input helpers', () => {
 	});
 
 	it('$input.item returns first item in allItems mode', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: $input.item.json }];',
 			input,
 			'runOnceForAllItems',
@@ -184,7 +192,7 @@ describe('$input helpers', () => {
 	});
 
 	it('$input.item returns current item in eachItem mode', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return { json: $input.item.json };',
 			input,
 			'runOnceForEachItem',
@@ -202,7 +210,7 @@ describe('$input helpers', () => {
 // ============================================================
 describe('aliases', () => {
 	it('$json returns first item json in allItems mode', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { val: $json.x } }];',
 			makeItems({ x: 42 }),
 			'runOnceForAllItems',
@@ -213,7 +221,7 @@ describe('aliases', () => {
 	});
 
 	it('$data is alias for $json', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { same: $data.x === $json.x } }];',
 			makeItems({ x: 99 }),
 			'runOnceForAllItems',
@@ -227,7 +235,7 @@ describe('aliases', () => {
 		const input: INodeExecutionData[] = [
 			{ json: { a: 1 }, binary: { file: { mimeType: 'text/plain', data: 'aGk=' } as never } },
 		];
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { mime: $binary.file?.mimeType } }];',
 			input,
 			'runOnceForAllItems',
@@ -238,7 +246,7 @@ describe('aliases', () => {
 	});
 
 	it('items alias works in allItems mode', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { len: items.length } }];',
 			makeItems({ a: 1 }, { a: 2 }),
 			'runOnceForAllItems',
@@ -249,7 +257,7 @@ describe('aliases', () => {
 	});
 
 	it('item alias works in eachItem mode', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return { json: item.json };',
 			makeItems({ val: 'hello' }),
 			'runOnceForEachItem',
@@ -260,7 +268,7 @@ describe('aliases', () => {
 	});
 
 	it('$json returns current item json in eachItem mode', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return { json: { v: $json.n } };',
 			makeItems({ n: 10 }, { n: 20 }),
 			'runOnceForEachItem',
@@ -282,7 +290,7 @@ describe('$() node accessor', () => {
 	};
 
 	it('$().all() returns all items from referenced node', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			`return [{ json: { count: $('Webhook').all().length } }];`,
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -293,7 +301,7 @@ describe('$() node accessor', () => {
 	});
 
 	it('$().first() returns first item', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			`return [{ json: $('Webhook').first().json }];`,
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -304,7 +312,7 @@ describe('$() node accessor', () => {
 	});
 
 	it('$().last() returns last item', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			`return [{ json: $('DB Query').last().json }];`,
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -315,7 +323,7 @@ describe('$() node accessor', () => {
 	});
 
 	it('$().item returns first item as property', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			`return [{ json: $('Webhook').item.json }];`,
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -326,7 +334,7 @@ describe('$() node accessor', () => {
 	});
 
 	it('$().pairedItem(index) returns item at index', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			`return [{ json: $('DB Query').pairedItem(1).json }];`,
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -337,7 +345,7 @@ describe('$() node accessor', () => {
 	});
 
 	it('$().itemMatching(index) returns item at index', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			`return [{ json: $('DB Query').itemMatching(2).json }];`,
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -348,7 +356,7 @@ describe('$() node accessor', () => {
 	});
 
 	it('$().isExecuted is true', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			`return [{ json: { executed: $('Webhook').isExecuted } }];`,
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -360,7 +368,7 @@ describe('$() node accessor', () => {
 
 	it('$() throws for unknown node', async () => {
 		await expect(
-			runBunCode(
+			run(
 				`return [{ json: $('NonExistent').all() }];`,
 				makeItems({ x: 1 }),
 				'runOnceForAllItems',
@@ -376,7 +384,7 @@ describe('$() node accessor', () => {
 // ============================================================
 describe('$items() legacy function', () => {
 	it('$items() without args returns input data', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { count: $items().length } }];',
 			makeItems({ a: 1 }, { a: 2 }),
 			'runOnceForAllItems',
@@ -387,7 +395,7 @@ describe('$items() legacy function', () => {
 	});
 
 	it('$items(nodeName) returns node data', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			`return [{ json: { count: $items('MyNode').length } }];`,
 			makeItems({ a: 1 }),
 			'runOnceForAllItems',
@@ -403,7 +411,7 @@ describe('$items() legacy function', () => {
 // ============================================================
 describe('workflow & execution context', () => {
 	it('$workflow exposes id, name, active', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { id: $workflow.id, name: $workflow.name, active: $workflow.active } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -414,7 +422,7 @@ describe('workflow & execution context', () => {
 	});
 
 	it('$execution exposes id, mode, resumeUrl', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { id: $execution.id, mode: $execution.mode } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -425,7 +433,7 @@ describe('workflow & execution context', () => {
 	});
 
 	it('$mode returns execution mode', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { mode: $mode } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -436,7 +444,7 @@ describe('workflow & execution context', () => {
 	});
 
 	it('$prevNode exposes name, outputIndex, runIndex', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { name: $prevNode.name, out: $prevNode.outputIndex } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -452,7 +460,7 @@ describe('workflow & execution context', () => {
 // ============================================================
 describe('environment, variables & secrets', () => {
 	it('$env exposes environment variables', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { key: $env.MY_KEY } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -463,7 +471,7 @@ describe('environment, variables & secrets', () => {
 	});
 
 	it('$vars exposes workflow variables', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { base: $vars.BASE_URL } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -474,7 +482,7 @@ describe('environment, variables & secrets', () => {
 	});
 
 	it('$secrets exposes external secrets', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { token: $secrets.API_TOKEN } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -490,7 +498,7 @@ describe('environment, variables & secrets', () => {
 // ============================================================
 describe('node parameters & context', () => {
 	it('$parameter exposes node parameters', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { mode: $parameter.mode } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -501,7 +509,7 @@ describe('node parameters & context', () => {
 	});
 
 	it('$self exposes node context data', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { counter: $self.counter } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -512,7 +520,7 @@ describe('node parameters & context', () => {
 	});
 
 	it('$nodeId returns node ID', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { id: $nodeId } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -523,7 +531,7 @@ describe('node parameters & context', () => {
 	});
 
 	it('$nodeVersion returns node type version', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { ver: $nodeVersion } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -539,7 +547,7 @@ describe('node parameters & context', () => {
 // ============================================================
 describe('$getWorkflowStaticData', () => {
 	it('returns global static data', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			`return [{ json: $getWorkflowStaticData('global') }];`,
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -550,7 +558,7 @@ describe('$getWorkflowStaticData', () => {
 	});
 
 	it('returns node static data', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			`return [{ json: $getWorkflowStaticData('node') }];`,
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -566,7 +574,7 @@ describe('$getWorkflowStaticData', () => {
 // ============================================================
 describe('$evaluateExpression', () => {
 	it('returns pre-evaluated expression result', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			`return [{ json: { val: $evaluateExpression('{{ $json.name }}') } }];`,
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -578,7 +586,7 @@ describe('$evaluateExpression', () => {
 
 	it('throws for dynamic (non-pre-evaluated) expressions', async () => {
 		await expect(
-			runBunCode(
+			run(
 				`const expr = '{{ unknown }}'; return [{ json: { val: $evaluateExpression(expr) } }];`,
 				makeItems({ x: 1 }),
 				'runOnceForAllItems',
@@ -594,7 +602,7 @@ describe('$evaluateExpression', () => {
 // ============================================================
 describe('item position variables', () => {
 	it('$itemIndex, $position, $thisItemIndex reflect current index in eachItem mode', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return { json: { idx: $itemIndex, pos: $position, thisIdx: $thisItemIndex } };',
 			makeItems({ a: 1 }, { a: 2 }, { a: 3 }),
 			'runOnceForEachItem',
@@ -607,7 +615,7 @@ describe('item position variables', () => {
 	});
 
 	it('$thisItem returns current item in eachItem mode', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return { json: $thisItem.json };',
 			makeItems({ val: 'a' }, { val: 'b' }),
 			'runOnceForEachItem',
@@ -619,7 +627,7 @@ describe('item position variables', () => {
 	});
 
 	it('$runIndex and $thisRunIndex are 0', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { run: $runIndex, thisRun: $thisRunIndex } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -635,7 +643,7 @@ describe('item position variables', () => {
 // ============================================================
 describe('Luxon DateTime support', () => {
 	it('$now is defined and has toISO method', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { hasToISO: typeof $now.toISO === "function" } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -646,7 +654,7 @@ describe('Luxon DateTime support', () => {
 	});
 
 	it('$today is defined and is before or equal to $now', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { valid: $today <= $now } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -657,7 +665,7 @@ describe('Luxon DateTime support', () => {
 	});
 
 	it('DateTime class is available for date operations', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			`const dt = DateTime.fromISO('2024-06-15');
 			return [{ json: { year: dt.year, month: dt.month } }];`,
 			makeItems({ x: 1 }),
@@ -679,7 +687,7 @@ describe('TypeScript & async support', () => {
 			const data: Item[] = $input.all().map(i => i.json as Item);
 			return data.map(d => ({ json: { upper: d.name.toUpperCase() } }));
 		`;
-		const result = await runBunCode(
+		const result = await run(
 			code,
 			makeItems({ name: 'test', value: 1 }),
 			'runOnceForAllItems',
@@ -690,7 +698,7 @@ describe('TypeScript & async support', () => {
 	});
 
 	it('supports top-level await', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'const val = await Promise.resolve(42); return [{ json: { val } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -701,7 +709,7 @@ describe('TypeScript & async support', () => {
 	});
 
 	it('supports async operations in eachItem mode', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'const doubled = await Promise.resolve($json.n * 2); return { json: { doubled } };',
 			makeItems({ n: 5 }, { n: 10 }),
 			'runOnceForEachItem',
@@ -719,7 +727,7 @@ describe('TypeScript & async support', () => {
 describe('error handling', () => {
 	it('throws on script runtime error', async () => {
 		await expect(
-			runBunCode(
+			run(
 				'throw new Error("intentional failure");',
 				makeItems({ x: 1 }),
 				'runOnceForAllItems',
@@ -731,7 +739,7 @@ describe('error handling', () => {
 
 	it('throws when code produces no output', async () => {
 		await expect(
-			runBunCode(
+			run(
 				'// no return statement',
 				makeItems({ x: 1 }),
 				'runOnceForAllItems',
@@ -743,7 +751,7 @@ describe('error handling', () => {
 
 	it('throws descriptive error for undefined variable access', async () => {
 		await expect(
-			runBunCode(
+			run(
 				'return [{ json: { val: undefinedVar.property } }];',
 				makeItems({ x: 1 }),
 				'runOnceForAllItems',
@@ -774,7 +782,7 @@ describe('integration', () => {
 				}
 			}];
 		`;
-		const result = await runBunCode(
+		const result = await run(
 			code,
 			makeItems({ trigger: true }),
 			'runOnceForAllItems',
@@ -790,7 +798,7 @@ describe('integration', () => {
 	});
 
 	it('uses $env and $vars together', async () => {
-		const result = await runBunCode(
+		const result = await run(
 			'return [{ json: { url: $vars.BASE + $env.PATH_SUFFIX } }];',
 			makeItems({ x: 1 }),
 			'runOnceForAllItems',
@@ -814,7 +822,7 @@ describe('integration', () => {
 				}
 			};
 		`;
-		const result = await runBunCode(
+		const result = await run(
 			code,
 			makeItems({ val: 'a' }, { val: 'b' }),
 			'runOnceForEachItem',
@@ -823,5 +831,77 @@ describe('integration', () => {
 		);
 		expect(result[0].json).toEqual({ original: 'a', label: 'x', position: 0 });
 		expect(result[1].json).toEqual({ original: 'b', label: 'y', position: 1 });
+	});
+});
+
+// ============================================================
+// Console output (stdout capture)
+// ============================================================
+describe('console output capture', () => {
+	it('captures console.log output in stdout', async () => {
+		const { items, stdout } = await runBunCode(
+			'console.log("hello from bun"); return [{ json: { ok: true } }];',
+			makeItems({ x: 1 }),
+			'runOnceForAllItems',
+			{},
+			ctx(),
+		);
+		expect(items[0].json).toEqual({ ok: true });
+		expect(stdout).toContain('hello from bun');
+	});
+
+	it('captures multiple console.log calls', async () => {
+		const { items, stdout } = await runBunCode(
+			'console.log("line1"); console.log("line2"); return [{ json: { ok: true } }];',
+			makeItems({ x: 1 }),
+			'runOnceForAllItems',
+			{},
+			ctx(),
+		);
+		expect(items).toHaveLength(1);
+		expect(stdout).toContain('line1');
+		expect(stdout).toContain('line2');
+	});
+
+	it('returns empty stdout when no console output', async () => {
+		const { items, stdout } = await runBunCode(
+			'return [{ json: { quiet: true } }];',
+			makeItems({ x: 1 }),
+			'runOnceForAllItems',
+			{},
+			ctx(),
+		);
+		expect(items[0].json).toEqual({ quiet: true });
+		expect(stdout.trim()).toBe('');
+	});
+});
+
+// ============================================================
+// Timeout configuration
+// ============================================================
+describe('timeout configuration', () => {
+	it('respects custom timeout and kills long-running code', async () => {
+		await expect(
+			runBunCode(
+				'await new Promise(r => setTimeout(r, 10000)); return [{ json: { done: true } }];',
+				makeItems({ x: 1 }),
+				'runOnceForAllItems',
+				{},
+				ctx(),
+				{ timeoutMs: 500 },
+			),
+		).rejects.toThrow(/timed out/i);
+	}, 10_000);
+
+	it('completes fast code within timeout', async () => {
+		const { items } = await runBunCode(
+			'return [{ json: { fast: true } }];',
+			makeItems({ x: 1 }),
+			'runOnceForAllItems',
+			{},
+			ctx(),
+			{ timeoutMs: 30_000 },
+		);
+		expect(items[0].json).toEqual({ fast: true });
 	});
 });

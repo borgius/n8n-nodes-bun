@@ -19,6 +19,15 @@ export interface ExecutionContext {
 	evaluatedExpressions: Record<string, unknown>;
 }
 
+export interface RunBunCodeResult {
+	items: INodeExecutionData[];
+	stdout: string;
+}
+
+export interface RunBunCodeOptions {
+	timeoutMs?: number;
+}
+
 /**
  * Builds the shared preamble injected into every subprocess script.
  * Provides all n8n Code-node compatible $ helpers.
@@ -222,7 +231,8 @@ writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify(__results));
 function executeBun(
 	scriptPath: string,
 	nodePath?: string,
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	timeoutMs?: number,
+): Promise<{ stdout: string; stderr: string; exitCode: number; signal?: string }> {
 	return new Promise((resolve, reject) => {
 		const spawnEnv = { ...process.env };
 		if (nodePath) {
@@ -230,7 +240,7 @@ function executeBun(
 		}
 		const proc = spawn('bun', ['run', scriptPath], {
 			stdio: ['ignore', 'pipe', 'pipe'],
-			timeout: 60_000,
+			...(timeoutMs ? { timeout: timeoutMs } : {}),
 			env: spawnEnv,
 		});
 
@@ -256,8 +266,8 @@ function executeBun(
 			}
 		});
 
-		proc.on('close', (exitCode: number | null) => {
-			resolve({ stdout, stderr, exitCode: exitCode ?? 1 });
+		proc.on('close', (exitCode: number | null, signal: NodeJS.Signals | null) => {
+			resolve({ stdout, stderr, exitCode: exitCode ?? 1, signal: signal ?? undefined });
 		});
 	});
 }
@@ -281,7 +291,8 @@ export async function runBunCode(
 		staticData: { global: {}, node: {} },
 		evaluatedExpressions: {},
 	},
-): Promise<INodeExecutionData[]> {
+	options: RunBunCodeOptions = {},
+): Promise<RunBunCodeResult> {
 	const tempDir = await mkdtemp(join(tmpdir(), 'n8n-bun-'));
 	const inputPath = join(tempDir, 'input.json');
 	const outputPath = join(tempDir, 'output.json');
@@ -304,9 +315,19 @@ export async function runBunCode(
 		// Resolve custom node_modules for require() in user code
 		// __dirname: .../node_modules/n8n-nodes-bun/dist/nodes/BunCode
 		const customNodeModules = join(__dirname, '..', '..', '..', '..');
-		const { stderr, exitCode } = await executeBun(scriptPath, customNodeModules);
+		const { stdout, stderr, exitCode, signal } = await executeBun(
+			scriptPath,
+			customNodeModules,
+			options.timeoutMs,
+		);
 
 		if (exitCode !== 0) {
+			if (signal === 'SIGTERM') {
+				const timeoutSec = (options.timeoutMs ?? 0) / 1000;
+				throw new Error(
+					`Bun execution timed out after ${timeoutSec} seconds`,
+				);
+			}
 			throw new Error(
 				`Bun execution failed (exit code ${exitCode}):\n${stderr}`,
 			);
@@ -321,7 +342,10 @@ export async function runBunCode(
 			);
 		}
 
-		return JSON.parse(outputRaw) as INodeExecutionData[];
+		return {
+			items: JSON.parse(outputRaw) as INodeExecutionData[],
+			stdout,
+		};
 	} finally {
 		await rm(tempDir, { recursive: true, force: true }).catch(() => {});
 	}

@@ -13,8 +13,9 @@ Unlike the built-in Code node (which runs in a sandboxed VM), this node spawns a
 - **No sandbox** — code executes with full system access (read/write files, spawn processes, network calls)
 - **Two execution modes** — "Run Once for All Items" and "Run Once for Each Item", matching the standard Code node
 - **Full n8n Code node compatibility** — `$input`, `$json`, `$('NodeName')`, `$workflow`, `$execution`, `$env`, `$now`, `DateTime`, and more
+- **Console output** — `console.log()` output is captured and included in the output items as `_stdout`
 - **Error handling** — supports n8n's "Continue on Fail" setting
-- **60-second timeout** — prevents runaway scripts
+- **Configurable timeout** — default 60 seconds, adjustable per node (set to 0 for no limit)
 
 ## Prerequisites
 
@@ -394,9 +395,10 @@ n8n node                              Bun child process
 │ Parse $() refs   │                  │                     │
 │ Collect node data│──input.json────> │ Read input          │
 │ Collect context  │──nodeData.json─> │ Build $() accessor  │
-│                  │──context.json──> │ Set up $workflow etc │
+│                  │──context.json─> │ Set up $workflow etc │
 │                  │                  │ Execute user code   │
-│ Parse output     │<─output.json─── │ Write result        │
+│ Parse output     │<-─output.json─── │ Write result        │
+│ Capture stdout   │<─-── stdout ──── │ console.log() calls │
 └──────────────────┘                  └─────────────────────┘
 ```
 
@@ -419,9 +421,9 @@ This node executes code **without any sandbox**. The Bun process has full access
 - **`$fromAI()`** — AI-generated content placeholders are not available (requires AI agent runtime).
 - **`$getPairedItem()`** — advanced paired item resolution is not available (requires full execution graph).
 - **Credential helpers** — `helpers.httpRequestWithAuthentication` and credential access are not available. Use `fetch()` or Bun APIs directly with tokens from `$env` or `$secrets`.
-- **Console output** — `console.log()` output from your code goes to the Bun process stderr/stdout and is not displayed in the n8n UI.
+- **Console output** — `console.log()` output is captured and attached to the first output item under the `_stdout` key. If your code produces no output items but has console output, a synthetic item with `_stdout` is created.
 - **Dynamic `$()` references** — node names in `$('NodeName')` must be string literals in your code (not variables), since they are parsed statically before execution.
-- **Execution timeout** — scripts are killed after 60 seconds.
+- **Execution timeout** — configurable per node (default 60 seconds). Set to 0 for no timeout. When exceeded, the error message clearly indicates a timeout.
 - **Requires Bun installed** — the `bun` binary must be in the system PATH on the machine running n8n.
 
 ## Development

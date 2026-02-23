@@ -84,8 +84,19 @@ export class BunCode implements INodeType {
 				},
 			},
 			{
+				displayName: 'Timeout (Seconds)',
+				name: 'timeout',
+				type: 'number',
+				default: 60,
+				description:
+					'Maximum execution time in seconds. Set to 0 for no timeout.',
+				typeOptions: {
+					minValue: 0,
+				},
+			},
+			{
 				displayName:
-					'Bun natively supports TypeScript, top-level await, and fast built-in APIs. No sandbox — code runs with full system access. <a href="https://bun.sh/docs" target="_blank">Bun docs</a>',
+					'Bun natively supports TypeScript, top-level await, and fast built-in APIs. No sandbox — code runs with full system access. console.log() output is included in the output items under _stdout. <a href="https://bun.sh/docs" target="_blank">Bun docs</a>',
 				name: 'notice',
 				type: 'notice',
 				default: '',
@@ -96,6 +107,7 @@ export class BunCode implements INodeType {
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const mode = this.getNodeParameter('mode', 0) as string;
 		const code = this.getNodeParameter('code', 0) as string;
+		const timeout = this.getNodeParameter('timeout', 0, 60) as number;
 		const inputItems = this.getInputData();
 		const proxy = this.getWorkflowDataProxy(0);
 
@@ -176,7 +188,24 @@ export class BunCode implements INodeType {
 		};
 
 		try {
-			const result = await runBunCode(code, inputItems, mode, nodeDataMap, executionContext);
+			const { items: result, stdout } = await runBunCode(
+				code,
+				inputItems,
+				mode,
+				nodeDataMap,
+				executionContext,
+				{ timeoutMs: timeout > 0 ? timeout * 1000 : undefined },
+			);
+
+			// Surface console.log() output in the n8n UI via output items
+			if (stdout.trim()) {
+				if (result.length > 0) {
+					result[0].json._stdout = stdout.trim();
+				} else {
+					result.push({ json: { _stdout: stdout.trim() } });
+				}
+			}
+
 			return [result];
 		} catch (error) {
 			if (this.continueOnFail()) {
